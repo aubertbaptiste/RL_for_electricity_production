@@ -1,18 +1,42 @@
 import gymnasium as gym
 from gymnasium import spaces, Env
 import numpy as np
-def conso_match(conso,prod):
-    return sum(prod) >= conso , sum(prod)-conso
+def conso_match(conso,solaire,Pbat,action_possible):
+    if action_possible:
+        gaz= conso-solaire-Pbat
+    else:
+        print("Puissance exigée non disponible")
+        gaz= conso-solaire-Pbat
+    print(gaz)
+    return gaz
 
-def battery_availability(battery,prod): # Risque d'y avoir un problème car l'agent ne connait pas le niveau de battery
-    prod_as_list = list(prod)
-    if prod_as_list[2]>battery:
-        print(f"La batterie n'a pas assez de puissance disponible : Demandé : {prod[2]}, Disponible : {battery}")
-        prod_as_list[2]=battery
-    return tuple(prod_as_list)
+def check_battery(self,action):
+    if action == 0: # Charger à 100%
+        self.battery = self.battery_max
+        Pbat = -self.battery_max
+        return True, Pbat
+    if action == 1 : # Charger à 50%
+        self.battery += 0.5*self.battery_max
+        Pbat = -0.5*self.battery_max
+        return True, Pbat
+        if self.battery > self.battery_max : print("Battery supérieur au max") # Debug
+    if action == 2 : # On bouge pas
+        Pbat = 0
+        return True, Pbat
+    if action == 3 : # On décharge de 50%
+        if self.battery >= 0.5*self.battery_max:
+            self.battery -= 0.5*self.battery_max
+            Pbat= 0.5*self.battery_max
+            return True,Pbat
+        else : return False,0
+    if action == 4 : 
+        if self.battery == self.battery_max:
+            self.battery = 0
+            Pbat = self.battery_max
+            return True,Pbat
+        else : return False,0
 
-def update_battery(battery,gain):
-    return battery + gain
+
 
 
 class PowerGridEnv(Env):
@@ -27,11 +51,7 @@ class PowerGridEnv(Env):
         self.max_hour = len(scenario)
         self.battery_max = battery_max
 
-        self.action_space = spaces.Tuple((
-            spaces.Discrete(self.cons_max),
-            spaces.Discrete(self.cons_max),
-            spaces.Discrete(battery_max))
-            )
+        self.action_space = spaces.Discrete(5) # On a 5 actions : Charger à 100% 50% 0%, décharger à 50% ou 100%
         self.observation_space = spaces.Box(
             low=-1.0, 
             high=1.0, 
@@ -47,15 +67,9 @@ class PowerGridEnv(Env):
 
     def _step(self,action):
         assert self.action_space.contains(action)
-        action_corrected = battery_availability(self.battery,action) # On check si on a assez de battery
-        sufficient,gain = conso_match(self.scenario[self.hour][0],action)
-        reward = -action_corrected[0]*0.5 # On pénalise la production au gaz
-        print(reward,gain) # A SUPR 
-        if sufficient:
-            reward = reward
-            self.battery = update_battery(self.battery,gain)
-        else:
-            reward = reward + gain*2  # On pénalise beaucoup le déficit
+        action_possible,Pbat = check_battery(self,action) # On check si on a assez de battery et on l'update
+        gaz = conso_match(self.scenario[self.hour][0],self.scenario[self.hour][1],Pbat,action_possible)
+        reward = min(-gaz*0.5,0) # On pénalise la production au gaz. Si on a un surplus solaire alors on pénalise pas
         self.hour += 1
         if self.hour >= self.max_hour:
             done = True
@@ -66,7 +80,7 @@ class PowerGridEnv(Env):
     
     def _reset(self,seed=None):
         self.hour = self.np_random.integers(0,24)
-        self.battery = self.np_random.uniform(0.1,0.9)*self.battery_max
+        self.battery = self.np_random.choice([0,0.5,1])*self.battery_max
         return self._get_obs()
 
     def _get_obs(self):
