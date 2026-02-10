@@ -3,38 +3,50 @@ from gymnasium import spaces, Env
 import numpy as np
 def conso_match(conso,solaire,Pbat,action_possible):
     if action_possible:
-        gaz= conso-solaire-Pbat
+        gaz= max(0,conso-solaire-Pbat)
+        penalty=0
     else:
         print("Puissance exigée non disponible")
-        gaz= conso-solaire-Pbat
-    print(gaz)
-    return gaz
+        gaz= max(0,conso-solaire-Pbat)
+        penalty = -gaz # On double la pénalité du gaz si on a chargé la battery alors qu'il ne fallait pas
+    return gaz,penalty
 
 def check_battery(self,action):
     if action == 0: # Charger à 100%
-        self.battery = self.battery_max
-        Pbat = -self.battery_max
-        return True, Pbat
+        if self.battery == 0:
+            self.battery = self.battery_max
+            Pbat = -self.battery_max
+            penalty = 0
+        else : 
+            print("Battery supérieur au max") # Debug 
+            penalty = -self.battery_max
+            Pbat =0
+        return True, Pbat,penalty
     if action == 1 : # Charger à 50%
-        self.battery += 0.5*self.battery_max
-        Pbat = -0.5*self.battery_max
-        return True, Pbat
-        if self.battery > self.battery_max : print("Battery supérieur au max") # Debug
+        if self.battery + 0.5*self.battery_max > self.battery_max : 
+            print("Battery supérieur au max") # Debug
+            penalty = -0.5*self.battery_max
+            Pbat=0
+        else :
+            self.battery += 0.5*self.battery_max
+            Pbat = -0.5*self.battery_max
+            penalty = 0
+        return True, Pbat,penalty   
     if action == 2 : # On bouge pas
         Pbat = 0
-        return True, Pbat
+        return True, Pbat,0
     if action == 3 : # On décharge de 50%
         if self.battery >= 0.5*self.battery_max:
             self.battery -= 0.5*self.battery_max
             Pbat= 0.5*self.battery_max
-            return True,Pbat
-        else : return False,0
+            return True,Pbat,0
+        else : return False,0,0
     if action == 4 : 
         if self.battery == self.battery_max:
             self.battery = 0
             Pbat = self.battery_max
-            return True,Pbat
-        else : return False,0
+            return True,Pbat,0
+        else : return False,0,0
 
 
 
@@ -67,9 +79,9 @@ class PowerGridEnv(Env):
 
     def _step(self,action):
         assert self.action_space.contains(action)
-        action_possible,Pbat = check_battery(self,action) # On check si on a assez de battery et on l'update
-        gaz = conso_match(self.scenario[self.hour][0],self.scenario[self.hour][1],Pbat,action_possible)
-        reward = min(-gaz*0.5,0) # On pénalise la production au gaz. Si on a un surplus solaire alors on pénalise pas
+        action_possible,Pbat,overcharge = check_battery(self,action) # On check si on a assez de battery et on l'update
+        gaz,penalty = conso_match(self.scenario[self.hour][0],self.scenario[self.hour][1],Pbat,action_possible)
+        reward = min(-gaz,0)+penalty+overcharge # On pénalise la production au gaz. Si on a un surplus solaire alors on pénalise pas
         self.hour += 1
         if self.hour >= self.max_hour:
             done = True
